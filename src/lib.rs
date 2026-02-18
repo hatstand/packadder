@@ -108,12 +108,22 @@ pub use struct_pack_macro::pack;
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use anyhow::Result;
+    use byteorder::{ByteOrder, LittleEndian};
 
     #[test]
-    fn test_pack_tuple() -> Result<()> {
+    fn test_pack() -> Result<()> {
         let bytes = pack!(">HHI", 1u16, 2u16, 0x12345678u32)?;
+        assert_eq!(bytes, vec![0, 1, 0, 2, 0x12, 0x34, 0x56, 0x78]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_from_variables() -> Result<()> {
+        let a: u16 = 1;
+        let b: u16 = 2;
+        let c: u32 = 0x12345678;
+        let bytes = pack!(">HHI", a, b, c)?;
         assert_eq!(bytes, vec![0, 1, 0, 2, 0x12, 0x34, 0x56, 0x78]);
         Ok(())
     }
@@ -136,6 +146,8 @@ mod tests {
     fn test_pack_floats() -> Result<()> {
         let bytes = pack!("<fd", 3.14f32, 2.718f64)?;
         assert_eq!(bytes.len(), 4 + 8); // 4 bytes for f32, 8 for f64
+        assert_eq!(LittleEndian::read_f32(&bytes[0..4]), 3.14f32);
+        assert_eq!(LittleEndian::read_f64(&bytes[4..12]), 2.718f64);
         Ok(())
     }
 

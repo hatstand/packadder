@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 struct_pack_macro = { path = "struct_pack_macro" }
+byteorder = "1.5"
 
 [dev-dependencies]
 anyhow = "1.0.101"

@@ -169,16 +169,55 @@ fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
     }
 }
 
-fn generate_pack_code(byte_order: ByteOrder, value: &Expr) -> proc_macro2::TokenStream {
+fn generate_pack_code(
+    byte_order: ByteOrder,
+    spec: &FormatSpec,
+    value: &Expr,
+) -> proc_macro2::TokenStream {
+    // Single-byte types don't need endianness
+    match spec.kind {
+        FormatKind::SignedByte => {
+            return quote! {
+                result.write_i8(#value).unwrap();
+            };
+        }
+        FormatKind::UnsignedByte => {
+            return quote! {
+                result.write_u8(#value).unwrap();
+            };
+        }
+        _ => {}
+    }
+
+    let write_method = match spec.kind {
+        FormatKind::SignedShort => quote! { write_i16 },
+        FormatKind::UnsignedShort => quote! { write_u16 },
+        FormatKind::SignedInt => quote! { write_i32 },
+        FormatKind::UnsignedInt => quote! { write_u32 },
+        FormatKind::SignedLongLong => quote! { write_i64 },
+        FormatKind::UnsignedLongLong => quote! { write_u64 },
+        FormatKind::Float => quote! { write_f32 },
+        FormatKind::Double => quote! { write_f64 },
+        _ => {
+            panic!("Cannot generate pack code for pad byte or bytes")
+        }
+    };
+
     match byte_order {
         ByteOrder::Big | ByteOrder::Network => {
-            quote! { result.extend((#value).to_be_bytes()); }
+            quote! {
+                result.#write_method::<byteorder::BigEndian>(#value).unwrap();
+            }
         }
         ByteOrder::Little => {
-            quote! { result.extend((#value).to_le_bytes()); }
+            quote! {
+                result.#write_method::<byteorder::LittleEndian>(#value).unwrap();
+            }
         }
         ByteOrder::Native => {
-            quote! { result.extend((#value).to_ne_bytes()); }
+            quote! {
+                result.#write_method::<byteorder::NativeEndian>(#value).unwrap();
+            }
         }
     }
 }
@@ -269,7 +308,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
                 });
 
                 // Generate packing code
-                let pack_code = generate_pack_code(byte_order, value);
+                let pack_code = generate_pack_code(byte_order, spec, value);
                 pack_operations.push(pack_code);
 
                 value_idx += 1;
@@ -279,6 +318,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         {
+            use byteorder::WriteBytesExt;
             #(#type_checks)*
             let mut result = Vec::new();
             #(#pack_operations)*

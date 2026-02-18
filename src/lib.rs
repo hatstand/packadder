@@ -330,12 +330,14 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(target_endian = "little")]
     #[test]
     fn test_pack_pointer() -> Result<()> {
-        let ptr: *const u8 = std::ptr::null();
+        let ptr: *const u8 = 42 as *const u8;
         let bytes = pack!("P", ptr)?;
         assert_eq!(bytes.len(), std::mem::size_of::<*const u8>());
-        bytes.iter().for_each(|&b| assert_eq!(b, 0));
+        assert_eq!(bytes[0], 42);
+        bytes[1..].iter().for_each(|&b| assert_eq!(b, 0));
         Ok(())
     }
 }

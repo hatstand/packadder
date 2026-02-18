@@ -11,7 +11,6 @@ use nom::{
     character::complete::{char, digit1},
     combinator::{map, map_res, opt},
     multi::many0,
-    sequence::tuple,
 };
 
 struct PackArgs {
@@ -129,7 +128,7 @@ fn parse_count(input: &str) -> IResult<&str, usize> {
 /// Parse a single format specification
 fn parse_format_spec(input: &str) -> IResult<&str, FormatSpec> {
     map(
-        tuple((opt(parse_count), parse_format_char)),
+        (opt(parse_count), parse_format_char),
         |(count_opt, format_char)| {
             let count = count_opt.unwrap_or(1);
             let kind = match format_char {
@@ -201,6 +200,8 @@ fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
         FormatKind::Double => quote! { f64 },
         FormatKind::Bytes => quote! { &[u8] },
         FormatKind::Bool => quote! { bool },
+        FormatKind::PascalString => quote! { &str },
+        FormatKind::Pointer => quote! { *const _ },
         _ => {
             abort_call_site!("Unsupported format kind for type mapping: {:?}", spec.kind)
         }
@@ -253,7 +254,7 @@ fn generate_pack_code(
         _ => {}
     }
 
-    // ssize_t & size_t are always native-endian.
+    // ssize_t, size_t and pointers are always native-endian.
     match spec.kind {
         FormatKind::SignedSize => {
             // Handle size_t and ssize_t based on target pointer width
@@ -284,6 +285,20 @@ fn generate_pack_code(
                 };
             }
         }
+        FormatKind::Pointer => {
+            #[cfg(target_pointer_width = "64")]
+            {
+                return quote! {
+                    result.write_u64::<byteorder::NativeEndian>(#value as u64).unwrap();
+                };
+            }
+            #[cfg(target_pointer_width = "32")]
+            {
+                return quote! {
+                    result.write_u32::<byteorder::NativeEndian>(#value as u32).unwrap();
+                };
+            }
+        }
         _ => {}
     }
 
@@ -297,7 +312,7 @@ fn generate_pack_code(
         FormatKind::Float => quote! { write_f32 },
         FormatKind::Double => quote! { write_f64 },
         _ => {
-            panic!("Cannot generate pack code for pad byte or bytes")
+            abort_call_site!("Unsupported format kind for packing: {:?}", spec.kind)
         }
     };
 

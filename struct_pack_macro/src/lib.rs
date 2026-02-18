@@ -141,13 +141,6 @@ fn parse_format_string(fmt: &str) -> Result<(ByteOrder, Vec<FormatSpec>), String
         return Err(format!("Unexpected characters in format string: {}", rest));
     }
 
-    // Validate format characters
-    for spec in &specs {
-        if spec.kind == FormatKind::Bytes {
-            return Err("Format character 's' (string) not yet supported".to_string());
-        }
-    }
-
     Ok((byte_order, specs))
 }
 
@@ -163,8 +156,9 @@ fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
         FormatKind::UnsignedLongLong => quote! { u64 },
         FormatKind::Float => quote! { f32 },
         FormatKind::Double => quote! { f64 },
-        FormatKind::PadByte | FormatKind::Bytes => {
-            panic!("Cannot get Rust type for pad byte or bytes")
+        FormatKind::Bytes => quote! { &[u8] },
+        FormatKind::PadByte => {
+            panic!("Cannot get Rust type for pad byte")
         }
     }
 }
@@ -174,6 +168,22 @@ fn generate_pack_code(
     spec: &FormatSpec,
     value: &Expr,
 ) -> proc_macro2::TokenStream {
+    // Handle bytes (string) format
+    if spec.kind == FormatKind::Bytes {
+        let count = spec.count;
+        return quote! {
+            {
+                let bytes: &[u8] = #value;
+                let len = bytes.len().min(#count);
+                result.extend_from_slice(&bytes[..len]);
+                // Pad with zeros if needed
+                for _ in len..#count {
+                    result.push(0);
+                }
+            }
+        };
+    }
+
     // Single-byte types don't need endianness
     match spec.kind {
         FormatKind::SignedByte => {
@@ -236,10 +246,14 @@ pub fn pack(input: TokenStream) -> TokenStream {
 
     // Calculate total number of values needed (accounting for repeat counts)
     // Pad bytes ('x') don't consume values
+    // Bytes ('s') consume 1 value regardless of count
     let total_values_needed: usize = specs
         .iter()
-        .filter(|s| s.kind != FormatKind::PadByte)
-        .map(|s| s.count)
+        .map(|s| match s.kind {
+            FormatKind::PadByte => 0,
+            FormatKind::Bytes => 1,
+            _ => s.count,
+        })
         .sum();
 
     // Handle empty format string
@@ -292,6 +306,25 @@ pub fn pack(input: TokenStream) -> TokenStream {
                     result.push(0);
                 }
             });
+        } else if spec.kind == FormatKind::Bytes {
+            // Bytes format - consumes 1 value regardless of count
+            if value_idx >= values.len() {
+                break;
+            }
+
+            let value = &values[value_idx];
+            let rust_type = format_spec_to_rust_type(spec);
+
+            // Generate compile-time type check
+            type_checks.push(quote! {
+                let _: #rust_type = #value;
+            });
+
+            // Generate packing code
+            let pack_code = generate_pack_code(byte_order, spec, value);
+            pack_operations.push(pack_code);
+
+            value_idx += 1;
         } else {
             let rust_type = format_spec_to_rust_type(spec);
 

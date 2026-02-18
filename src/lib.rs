@@ -86,6 +86,25 @@
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
+/// # Bytes/Strings
+/// Format character 's' packs byte slices. The count specifies how many bytes to write.
+/// If the input is shorter, it's padded with zeros. If longer, it's truncated.
+/// ```
+/// use packadder::pack;
+/// // Pack exactly 5 bytes
+/// let bytes = pack!("5s", b"hello")?;
+/// assert_eq!(bytes, b"hello");
+///
+/// // Short strings are padded
+/// let bytes = pack!("5s", b"hi")?;
+/// assert_eq!(bytes, vec![b'h', b'i', 0, 0, 0]);
+///
+/// // Long strings are truncated
+/// let bytes = pack!("5s", b"hello world")?;
+/// assert_eq!(bytes, b"hello");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+///
 /// # Type Safety
 /// The macro provides compile-time type checking:
 ///
@@ -196,6 +215,43 @@ mod tests {
         assert_eq!(bytes, vec![1, 0, 2, 3, 0, 0, 0, 4, 5]);
         Ok(())
     }
+
+    #[test]
+    fn test_pack_string_exact() -> Result<()> {
+        let bytes = pack!("5s", b"hello")?;
+        assert_eq!(bytes, b"hello");
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_string_short() -> Result<()> {
+        // String shorter than count - should pad with zeros
+        let bytes = pack!("5s", b"hi")?;
+        assert_eq!(bytes, vec![b'h', b'i', 0, 0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_string_long() -> Result<()> {
+        // String longer than count - should truncate
+        let bytes = pack!("5s", b"hello world")?;
+        assert_eq!(bytes, b"hello");
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_string_with_other_types() -> Result<()> {
+        let bytes = pack!(">H5sB", 0x1234u16, b"test", 0x42u8)?;
+        assert_eq!(bytes, vec![0x12, 0x34, b't', b'e', b's', b't', 0, 0x42]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_byte_string() -> Result<()> {
+        let bytes = pack!("5s", b"Hello")?;
+        assert_eq!(bytes, b"Hello");
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +279,26 @@ mod python_compat_tests {
             let mut args = vec![format.to_object(py)];
             for value in values {
                 args.push(value.to_object(py));
+            }
+
+            let result = pack_fn
+                .call1(pyo3::types::PyTuple::new_bound(py, args))
+                .unwrap();
+            let bytes: &Bound<'_, PyBytes> = result.downcast().unwrap();
+            bytes.as_bytes().to_vec()
+        })
+    }
+
+    /// Helper function to call Python's struct.pack with byte strings
+    fn python_pack_with_bytes(format: &str, values: Vec<pyo3::Py<pyo3::PyAny>>) -> Vec<u8> {
+        Python::with_gil(|py| {
+            let struct_module = py.import_bound("struct").unwrap();
+            let pack_fn = struct_module.getattr("pack").unwrap();
+
+            // Build args tuple: (format, *values)
+            let mut args = vec![format.to_object(py)];
+            for value in values {
+                args.push(value);
             }
 
             let result = pack_fn
@@ -462,6 +538,73 @@ mod python_compat_tests {
         let py_result = python_pack(">I", vec![&0xFFFFFFFFu32]);
         assert_eq!(rust_result, py_result);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_compat_string_exact() -> Result<()> {
+        let rust_result = pack!("5s", b"hello")?;
+        let py_result = Python::with_gil(|py| {
+            let py_bytes = PyBytes::new_bound(py, b"hello");
+            python_pack_with_bytes("5s", vec![py_bytes.into_py(py)])
+        });
+        assert_eq!(
+            rust_result, py_result,
+            "Mismatch for format '5s': Rust={:?}, Python={:?}",
+            rust_result, py_result
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_compat_string_short() -> Result<()> {
+        let rust_result = pack!("5s", b"hi")?;
+        let py_result = Python::with_gil(|py| {
+            let py_bytes = PyBytes::new_bound(py, b"hi");
+            python_pack_with_bytes("5s", vec![py_bytes.into_py(py)])
+        });
+        assert_eq!(
+            rust_result, py_result,
+            "Mismatch for format '5s': Rust={:?}, Python={:?}",
+            rust_result, py_result
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_compat_string_long() -> Result<()> {
+        let rust_result = pack!("5s", b"hello world")?;
+        let py_result = Python::with_gil(|py| {
+            let py_bytes = PyBytes::new_bound(py, b"hello world");
+            python_pack_with_bytes("5s", vec![py_bytes.into_py(py)])
+        });
+        assert_eq!(
+            rust_result, py_result,
+            "Mismatch for format '5s': Rust={:?}, Python={:?}",
+            rust_result, py_result
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_compat_string_with_types() -> Result<()> {
+        let rust_result = pack!(">H5sB", 0x1234u16, b"test", 0x42u8)?;
+        let py_result = Python::with_gil(|py| {
+            let py_bytes = PyBytes::new_bound(py, b"test");
+            python_pack_with_bytes(
+                ">H5sB",
+                vec![
+                    0x1234u16.into_py(py),
+                    py_bytes.into_py(py),
+                    0x42u8.into_py(py),
+                ],
+            )
+        });
+        assert_eq!(
+            rust_result, py_result,
+            "Mismatch for format '>H5sB': Rust={:?}, Python={:?}",
+            rust_result, py_result
+        );
         Ok(())
     }
 }

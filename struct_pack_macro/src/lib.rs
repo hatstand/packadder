@@ -42,9 +42,25 @@ enum ByteOrder {
     Native,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FormatKind {
+    SignedByte,       // b
+    UnsignedByte,     // B
+    SignedShort,      // h
+    UnsignedShort,    // H
+    SignedInt,        // i
+    UnsignedInt,      // I
+    SignedLongLong,   // q
+    UnsignedLongLong, // Q
+    Float,            // f
+    Double,           // d
+    PadByte,          // x
+    Bytes,            // s
+}
+
 #[derive(Debug, Clone)]
 struct FormatSpec {
-    format_char: char,
+    kind: FormatKind,
     count: usize,
 }
 
@@ -88,9 +104,24 @@ fn parse_count(input: &str) -> IResult<&str, usize> {
 fn parse_format_spec(input: &str) -> IResult<&str, FormatSpec> {
     map(
         tuple((opt(parse_count), parse_format_char)),
-        |(count, format_char)| FormatSpec {
-            count: count.unwrap_or(1),
-            format_char,
+        |(count_opt, format_char)| {
+            let count = count_opt.unwrap_or(1);
+            let kind = match format_char {
+                'b' => FormatKind::SignedByte,
+                'B' => FormatKind::UnsignedByte,
+                'h' => FormatKind::SignedShort,
+                'H' => FormatKind::UnsignedShort,
+                'i' => FormatKind::SignedInt,
+                'I' => FormatKind::UnsignedInt,
+                'q' => FormatKind::SignedLongLong,
+                'Q' => FormatKind::UnsignedLongLong,
+                'f' => FormatKind::Float,
+                'd' => FormatKind::Double,
+                'x' => FormatKind::PadByte,
+                's' => FormatKind::Bytes,
+                _ => unreachable!("Unknown format character: {}", format_char),
+            };
+            FormatSpec { kind, count }
         },
     )(input)
 }
@@ -112,37 +143,33 @@ fn parse_format_string(fmt: &str) -> Result<(ByteOrder, Vec<FormatSpec>), String
 
     // Validate format characters
     for spec in &specs {
-        match spec.format_char {
-            'b' | 'B' | 'h' | 'H' | 'i' | 'I' | 'q' | 'Q' | 'f' | 'd' | 'x' => {}
-            's' => {
-                return Err("Format character 's' (string) not yet supported".to_string());
-            }
-            _ => {
-                return Err(format!("Unknown format character: {}", spec.format_char));
-            }
+        if spec.kind == FormatKind::Bytes {
+            return Err("Format character 's' (string) not yet supported".to_string());
         }
     }
 
     Ok((byte_order, specs))
 }
 
-fn format_char_to_rust_type(ch: char) -> proc_macro2::TokenStream {
-    match ch {
-        'b' => quote! { i8 },
-        'B' => quote! { u8 },
-        'h' => quote! { i16 },
-        'H' => quote! { u16 },
-        'i' => quote! { i32 },
-        'I' => quote! { u32 },
-        'q' => quote! { i64 },
-        'Q' => quote! { u64 },
-        'f' => quote! { f32 },
-        'd' => quote! { f64 },
-        _ => panic!("Unknown format character: {}", ch),
+fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
+    match spec.kind {
+        FormatKind::SignedByte => quote! { i8 },
+        FormatKind::UnsignedByte => quote! { u8 },
+        FormatKind::SignedShort => quote! { i16 },
+        FormatKind::UnsignedShort => quote! { u16 },
+        FormatKind::SignedInt => quote! { i32 },
+        FormatKind::UnsignedInt => quote! { u32 },
+        FormatKind::SignedLongLong => quote! { i64 },
+        FormatKind::UnsignedLongLong => quote! { u64 },
+        FormatKind::Float => quote! { f32 },
+        FormatKind::Double => quote! { f64 },
+        FormatKind::PadByte | FormatKind::Bytes => {
+            panic!("Cannot get Rust type for pad byte or bytes")
+        }
     }
 }
 
-fn generate_pack_code(byte_order: ByteOrder, _ch: char, value: &Expr) -> proc_macro2::TokenStream {
+fn generate_pack_code(byte_order: ByteOrder, value: &Expr) -> proc_macro2::TokenStream {
     match byte_order {
         ByteOrder::Big | ByteOrder::Network => {
             quote! { result.extend((#value).to_be_bytes()); }
@@ -172,7 +199,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
     // Pad bytes ('x') don't consume values
     let total_values_needed: usize = specs
         .iter()
-        .filter(|s| s.format_char != 'x')
+        .filter(|s| s.kind != FormatKind::PadByte)
         .map(|s| s.count)
         .sum();
 
@@ -181,7 +208,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
         // Still might have pad bytes
         let mut pack_operations = Vec::new();
         for spec in &specs {
-            if spec.format_char == 'x' {
+            if spec.kind == FormatKind::PadByte {
                 let count = spec.count;
                 pack_operations.push(quote! {
                     for _ in 0..#count {
@@ -218,7 +245,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
     let mut value_idx = 0;
 
     for spec in &specs {
-        if spec.format_char == 'x' {
+        if spec.kind == FormatKind::PadByte {
             // Pad bytes - no value needed, just add zeros
             let count = spec.count;
             pack_operations.push(quote! {
@@ -226,28 +253,27 @@ pub fn pack(input: TokenStream) -> TokenStream {
                     result.push(0);
                 }
             });
-            continue;
-        }
+        } else {
+            let rust_type = format_spec_to_rust_type(spec);
 
-        let rust_type = format_char_to_rust_type(spec.format_char);
+            for _ in 0..spec.count {
+                if value_idx >= values.len() {
+                    break;
+                }
 
-        for _ in 0..spec.count {
-            if value_idx >= values.len() {
-                break;
+                let value = &values[value_idx];
+
+                // Generate compile-time type check
+                type_checks.push(quote! {
+                    let _: #rust_type = #value;
+                });
+
+                // Generate packing code
+                let pack_code = generate_pack_code(byte_order, value);
+                pack_operations.push(pack_code);
+
+                value_idx += 1;
             }
-
-            let value = &values[value_idx];
-
-            // Generate compile-time type check
-            type_checks.push(quote! {
-                let _: #rust_type = #value;
-            });
-
-            // Generate packing code
-            let pack_code = generate_pack_code(byte_order, spec.format_char, value);
-            pack_operations.push(pack_code);
-
-            value_idx += 1;
         }
     }
 

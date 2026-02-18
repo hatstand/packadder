@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
+use proc_macro_error::{abort_call_site, proc_macro_error};
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
-use syn::token::For;
 use syn::{Expr, LitStr, Token, parse_macro_input};
 
 use nom::{
@@ -58,11 +58,14 @@ enum FormatKind {
     UnsignedLongLong, // Q
     SignedSize,       // n
     UnsignedSize,     // N
+    Half,             // e
     Float,            // f
     Double,           // d
     PadByte,          // x
     Bytes,            // s
     Bool,             // ?
+    FloatComplex,     // F
+    DoubleComplex,    // D
 }
 
 #[derive(Debug, Clone)]
@@ -87,9 +90,11 @@ fn parse_byte_order(input: &str) -> IResult<&str, ByteOrder> {
 /// Parse format character
 fn parse_format_char(input: &str) -> IResult<&str, char> {
     alt((
+        char('x'),
         char('c'),
         char('b'),
         char('B'),
+        char('?'),
         char('h'),
         char('H'),
         char('i'),
@@ -102,9 +107,10 @@ fn parse_format_char(input: &str) -> IResult<&str, char> {
         char('N'),
         char('f'),
         char('d'),
-        char('x'),
+        char('e'),
+        char('F'),
+        char('D'),
         char('s'),
-        char('?'),
     ))(input)
 }
 
@@ -135,13 +141,11 @@ fn parse_format_spec(input: &str) -> IResult<&str, FormatSpec> {
                 'Q' => FormatKind::UnsignedLongLong,
                 'n' => FormatKind::SignedSize,
                 'N' => FormatKind::UnsignedSize,
-                'e' => {
-                    panic!(
-                        "Format 'e' (half-precision float) is not supported in this implementation"
-                    )
-                }
+                'e' => FormatKind::Half,
                 'f' => FormatKind::Float,
                 'd' => FormatKind::Double,
+                'F' => FormatKind::FloatComplex,
+                'D' => FormatKind::DoubleComplex,
                 's' => FormatKind::Bytes,
                 _ => unreachable!("Unknown format character: {}", format_char),
             };
@@ -185,8 +189,8 @@ fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
         FormatKind::Double => quote! { f64 },
         FormatKind::Bytes => quote! { &[u8] },
         FormatKind::Bool => quote! { bool },
-        FormatKind::PadByte => {
-            panic!("Cannot get Rust type for pad byte")
+        _ => {
+            abort_call_site!("Unsupported format kind for type mapping: {:?}", spec.kind)
         }
     }
 }
@@ -304,6 +308,7 @@ fn generate_pack_code(
     }
 }
 
+#[proc_macro_error]
 #[proc_macro]
 pub fn pack(input: TokenStream) -> TokenStream {
     let PackArgs { format, values } = parse_macro_input!(input as PackArgs);

@@ -121,6 +121,17 @@
 /// let bytes = pack!(">HH", 1u16)?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
+///
+/// Unsupported format codes:
+/// `e` (half-precision float)
+/// `F` (float complex)
+/// `D` (double complex)
+///
+/// ```compile_fail
+/// use packadder::pack;
+/// pack!("<e", 1.0f32)?; // 'e' (half-precision float) is not supported
+/// ```
+///
 // Re-export the procedural macro
 pub use struct_pack_macro::pack;
 

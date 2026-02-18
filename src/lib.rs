@@ -32,6 +32,7 @@
 //! ```
 //!
 //! // Type-safe packing.
+//! use packadder::pack;
 //! let bytes = pack!(">HHI", 1u16, 2u16, 0x12345678u32)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
@@ -437,7 +438,7 @@ where
 /// # Examples
 ///
 /// ```
-/// use rmpub::pack;
+/// use packadder::pack;
 ///
 /// // Type-safe packing with compile-time verification
 /// let bytes = pack!(">HHI", 1u16, 2u16, 0x12345678u32)?;
@@ -447,7 +448,7 @@ where
 ///
 /// Empty format strings are supported:
 /// ```
-/// use rmpub::pack;
+/// use packadder::pack;
 ///
 /// let bytes = pack!("")?;
 /// # Ok::<(), anyhow::Error>(())
@@ -456,7 +457,7 @@ where
 /// # Repeat Counts
 /// Format strings support repeat counts (e.g., "3B" means 3 unsigned bytes):
 /// ```
-/// use rmpub::pack;
+/// use packadder::pack;
 /// let bytes = pack!("3B", 1u8, 2u8, 3u8)?;
 /// assert_eq!(bytes, vec![1, 2, 3]);
 ///
@@ -469,14 +470,14 @@ where
 /// The macro provides compile-time type checking:
 ///
 /// ```compile_fail
-/// use rmpub::pack;
+/// use packadder::pack;
 /// // This fails at compile time: u32 doesn't match format 'H' (u16)
 /// let bytes = pack!(">H", 0x12345678u32)?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
 /// ```compile_fail
-/// use rmpub::pack;
+/// use packadder::pack;
 /// // This fails at compile time: not enough values
 /// let bytes = pack!(">HH", 1u16)?;
 /// # Ok::<(), anyhow::Error>(())

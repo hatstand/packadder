@@ -1,0 +1,12 @@
+[package]
+name = "packadder"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.101"
+nom = "7.1"
+struct_pack_macro = { path = "struct_pack_macro" }
+
+[dev-dependencies]
+pyo3 = { version = "0.22", features = ["auto-initialize"] }

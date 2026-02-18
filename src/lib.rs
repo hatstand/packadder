@@ -608,3 +608,382 @@ mod python_compat_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod struct_format_tests {
+    //! Comprehensive format tests ported from Python's test_struct.py
+    //! These tests verify compatibility with Python's struct.pack() behavior
+
+    use super::*;
+    use anyhow::Result;
+
+    #[test]
+    fn test_simple_pack() -> Result<()> {
+        let c = b'a';
+        let b: i8 = 1;
+        let h: i16 = 255;
+        let i: i32 = 65535;
+        let q: i64 = 65536;
+        let f: f32 = 3.1415;
+        let d: f64 = 3.1415;
+
+        // Test with little-endian
+        let bytes = pack!("<xcbhiqfd", c, b, h, i, q, f, d)?;
+        assert_eq!(bytes.len(), 29);
+        assert_eq!(bytes[0], 0u8);
+        assert_eq!(bytes[1], c);
+        assert_eq!(bytes[2], b as u8);
+        assert_eq!(bytes[3..5], h.to_le_bytes());
+        assert_eq!(bytes[5..9], i.to_le_bytes());
+        assert_eq!(bytes[9..17], q.to_le_bytes());
+        assert_eq!(bytes[17..21], f.to_le_bytes());
+        assert_eq!(bytes[21..29], d.to_le_bytes());
+
+        // Test with big-endian
+        let be_bytes = pack!(">xcbhiqfd", c, b, h, i, q, f, d)?;
+        assert_eq!(be_bytes.len(), 29);
+        assert_eq!(be_bytes[0], 0u8);
+        assert_eq!(be_bytes[1], c);
+        assert_eq!(be_bytes[2], b as u8);
+        assert_eq!(be_bytes[3..5], h.to_be_bytes());
+        assert_eq!(be_bytes[5..9], i.to_be_bytes());
+        assert_eq!(be_bytes[9..17], q.to_be_bytes());
+        assert_eq!(be_bytes[17..21], f.to_be_bytes());
+        assert_eq!(be_bytes[21..29], d.to_be_bytes());
+
+        // Test with network byte order
+        let ne_bytes = pack!("!xcbhiqfd", c, b, h, i, q, f, d)?;
+        assert_eq!(ne_bytes, be_bytes);
+
+        Ok(())
+    }
+
+    /// Test basic format characters with known results
+    #[test]
+    fn test_format_c() -> Result<()> {
+        // Single character
+        let bytes = pack!("c", b'a')?;
+        assert_eq!(bytes, b"a");
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_with_padding() -> Result<()> {
+        // Test 'x' padding
+        let bytes = pack!("xc", b'a')?;
+        assert_eq!(bytes, b"\x00a");
+
+        let bytes = pack!("cx", b'a')?;
+        assert_eq!(bytes, b"a\x00");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_strings_various_sizes() -> Result<()> {
+        // 0s - empty string
+        let bytes = pack!("0s", b"helloworld")?;
+        assert_eq!(bytes, b"");
+
+        // 1s - single character
+        let bytes = pack!("1s", b"helloworld")?;
+        assert_eq!(bytes, b"h");
+
+        // 9s - truncates
+        let bytes = pack!("9s", b"helloworld")?;
+        assert_eq!(bytes, b"helloworl");
+
+        // 10s - exact fit
+        let bytes = pack!("10s", b"helloworld")?;
+        assert_eq!(bytes, b"helloworld");
+
+        // 11s - pads with null
+        let bytes = pack!("11s", b"helloworld")?;
+        assert_eq!(bytes, b"helloworld\x00");
+
+        // 20s - pads with nulls
+        let bytes = pack!("20s", b"helloworld")?;
+        assert_eq!(bytes, b"helloworld\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_signed_byte() -> Result<()> {
+        let bytes = pack!("b", 7i8)?;
+        assert_eq!(bytes, b"\x07");
+
+        let bytes = pack!("b", -7i8)?;
+        assert_eq!(bytes, b"\xf9");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unsigned_byte() -> Result<()> {
+        let bytes = pack!("B", 7u8)?;
+        assert_eq!(bytes, b"\x07");
+
+        let bytes = pack!("B", 249u8)?;
+        assert_eq!(bytes, b"\xf9");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_signed_short() -> Result<()> {
+        // Big-endian
+        let bytes = pack!(">h", 700i16)?;
+        assert_eq!(bytes, b"\x02\xbc");
+
+        let bytes = pack!(">h", -700i16)?;
+        assert_eq!(bytes, b"\xfd\x44");
+
+        // Little-endian
+        let bytes = pack!("<h", 700i16)?;
+        assert_eq!(bytes, b"\xbc\x02");
+
+        let bytes = pack!("<h", -700i16)?;
+        assert_eq!(bytes, b"\x44\xfd");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unsigned_short() -> Result<()> {
+        // Big-endian
+        let bytes = pack!(">H", 700u16)?;
+        assert_eq!(bytes, b"\x02\xbc");
+
+        let bytes = pack!(">H", 0xFFFFu16 - 699)?;
+        assert_eq!(bytes, b"\xfd\x44");
+
+        // Little-endian
+        let bytes = pack!("<H", 700u16)?;
+        assert_eq!(bytes, b"\xbc\x02");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_signed_int() -> Result<()> {
+        // Big-endian
+        let bytes = pack!(">i", 70000000i32)?;
+        assert_eq!(bytes, b"\x04\x2c\x1d\x80");
+
+        let bytes = pack!(">i", -70000000i32)?;
+        assert_eq!(bytes, b"\xfb\xd3\xe2\x80");
+
+        // Little-endian
+        let bytes = pack!("<i", 70000000i32)?;
+        assert_eq!(bytes, b"\x80\x1d\x2c\x04");
+
+        let bytes = pack!("<i", -70000000i32)?;
+        assert_eq!(bytes, b"\x80\xe2\xd3\xfb");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unsigned_int() -> Result<()> {
+        // Big-endian
+        let bytes = pack!(">I", 70000000u32)?;
+        assert_eq!(bytes, b"\x04\x2c\x1d\x80");
+
+        // Little-endian
+        let bytes = pack!("<I", 70000000u32)?;
+        assert_eq!(bytes, b"\x80\x1d\x2c\x04");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_float() -> Result<()> {
+        // Big-endian
+        let bytes = pack!(">f", 2.0f32)?;
+        assert_eq!(bytes, b"\x40\x00\x00\x00");
+
+        let bytes = pack!(">f", -2.0f32)?;
+        assert_eq!(bytes, b"\xc0\x00\x00\x00");
+
+        // Little-endian
+        let bytes = pack!("<f", 2.0f32)?;
+        assert_eq!(bytes, b"\x00\x00\x00\x40");
+
+        let bytes = pack!("<f", -2.0f32)?;
+        assert_eq!(bytes, b"\x00\x00\x00\xc0");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_double() -> Result<()> {
+        // Big-endian
+        let bytes = pack!(">d", 2.0f64)?;
+        assert_eq!(bytes, b"\x40\x00\x00\x00\x00\x00\x00\x00");
+
+        let bytes = pack!(">d", -2.0f64)?;
+        assert_eq!(bytes, b"\xc0\x00\x00\x00\x00\x00\x00\x00");
+
+        // Little-endian
+        let bytes = pack!("<d", 2.0f64)?;
+        assert_eq!(bytes, b"\x00\x00\x00\x00\x00\x00\x00\x40");
+
+        let bytes = pack!("<d", -2.0f64)?;
+        assert_eq!(bytes, b"\x00\x00\x00\x00\x00\x00\x00\xc0");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mixed_types_complex() -> Result<()> {
+        // Test a complex format with multiple types
+        let bytes = pack!(
+            "<BhHiIqQ",
+            0x12u8,
+            -1000i16,
+            5000u16,
+            -100000i32,
+            0xDEADBEEFu32,
+            -9223372036854775807i64,
+            0x123456789ABCDEFu64
+        )?;
+
+        // Verify it produces bytes (exact values depend on endianness and packing)
+        assert!(bytes.len() == 1 + 2 + 2 + 4 + 4 + 8 + 8);
+        assert_eq!(bytes[0], 0x12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_network_byte_order() -> Result<()> {
+        // Network byte order (!) is the same as big-endian
+        let bytes_network = pack!("!I", 0x12345678u32)?;
+        let bytes_big = pack!(">I", 0x12345678u32)?;
+        assert_eq!(bytes_network, bytes_big);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_padding() -> Result<()> {
+        // Multiple pad bytes
+        let bytes = pack!("xxxB", 42u8)?;
+        assert_eq!(bytes, b"\x00\x00\x00\x2a");
+
+        let bytes = pack!("Bxxx", 42u8)?;
+        assert_eq!(bytes, b"\x2a\x00\x00\x00");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_edge_case_integers() -> Result<()> {
+        // Test boundary values
+        let bytes = pack!("B", 0u8)?;
+        assert_eq!(bytes, b"\x00");
+
+        let bytes = pack!("B", 255u8)?;
+        assert_eq!(bytes, b"\xff");
+
+        let bytes = pack!("b", -128i8)?;
+        assert_eq!(bytes, b"\x80");
+
+        let bytes = pack!("b", 127i8)?;
+        assert_eq!(bytes, b"\x7f");
+
+        let bytes = pack!(">H", 0u16)?;
+        assert_eq!(bytes, b"\x00\x00");
+
+        let bytes = pack!(">H", 65535u16)?;
+        assert_eq!(bytes, b"\xff\xff");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_signed_long_long() -> Result<()> {
+        // Test 64-bit integers
+        let bytes = pack!(">q", 0x0102030405060708i64)?;
+        assert_eq!(bytes, b"\x01\x02\x03\x04\x05\x06\x07\x08");
+
+        let bytes = pack!("<q", 0x0102030405060708i64)?;
+        assert_eq!(bytes, b"\x08\x07\x06\x05\x04\x03\x02\x01");
+
+        // Test negative
+        let bytes = pack!(">q", -1i64)?;
+        assert_eq!(bytes, b"\xff\xff\xff\xff\xff\xff\xff\xff");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unsigned_long_long() -> Result<()> {
+        // Test 64-bit unsigned integers
+        let bytes = pack!(">Q", 0x0102030405060708u64)?;
+        assert_eq!(bytes, b"\x01\x02\x03\x04\x05\x06\x07\x08");
+
+        let bytes = pack!("<Q", 0x0102030405060708u64)?;
+        assert_eq!(bytes, b"\x08\x07\x06\x05\x04\x03\x02\x01");
+
+        // Test max value
+        let bytes = pack!(">Q", u64::MAX)?;
+        assert_eq!(bytes, b"\xff\xff\xff\xff\xff\xff\xff\xff");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_string_with_integers() -> Result<()> {
+        // Mix strings with other types
+        let bytes = pack!(">H5sI", 0x1234u16, b"hello", 0x56789ABCu32)?;
+        assert_eq!(bytes, b"\x12\x34hello\x56\x78\x9a\xbc");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_repeat_counts() -> Result<()> {
+        // Test repeat counts
+        let bytes = pack!("3B", 1u8, 2u8, 3u8)?;
+        assert_eq!(bytes, b"\x01\x02\x03");
+
+        let bytes = pack!(">2H", 0x1234u16, 0x5678u16)?;
+        assert_eq!(bytes, b"\x12\x34\x56\x78");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_string_format() -> Result<()> {
+        // Empty format string
+        let bytes = pack!("")?;
+        assert_eq!(bytes, b"");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_all_byte_orders() -> Result<()> {
+        let value = 0x12345678u32;
+
+        // Little-endian
+        let le = pack!("<I", value)?;
+        assert_eq!(le, b"\x78\x56\x34\x12");
+
+        // Big-endian
+        let be = pack!(">I", value)?;
+        assert_eq!(be, b"\x12\x34\x56\x78");
+
+        // Network (same as big-endian)
+        let net = pack!("!I", value)?;
+        assert_eq!(net, be);
+
+        // Native depends on platform
+        let native = pack!("=I", value)?;
+        assert!(native == le || native == be);
+
+        Ok(())
+    }
+}

@@ -44,6 +44,7 @@ enum ByteOrder {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FormatKind {
+    Char,             // c
     SignedByte,       // b
     UnsignedByte,     // B
     SignedShort,      // h
@@ -80,6 +81,7 @@ fn parse_byte_order(input: &str) -> IResult<&str, ByteOrder> {
 /// Parse format character
 fn parse_format_char(input: &str) -> IResult<&str, char> {
     alt((
+        char('c'),
         char('b'),
         char('B'),
         char('h'),
@@ -107,6 +109,7 @@ fn parse_format_spec(input: &str) -> IResult<&str, FormatSpec> {
         |(count_opt, format_char)| {
             let count = count_opt.unwrap_or(1);
             let kind = match format_char {
+                'c' => FormatKind::Char,
                 'b' => FormatKind::SignedByte,
                 'B' => FormatKind::UnsignedByte,
                 'h' => FormatKind::SignedShort,
@@ -146,6 +149,7 @@ fn parse_format_string(fmt: &str) -> Result<(ByteOrder, Vec<FormatSpec>), String
 
 fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
     match spec.kind {
+        FormatKind::Char => quote! { u8 },
         FormatKind::SignedByte => quote! { i8 },
         FormatKind::UnsignedByte => quote! { u8 },
         FormatKind::SignedShort => quote! { i16 },
@@ -186,6 +190,11 @@ fn generate_pack_code(
 
     // Single-byte types don't need endianness
     match spec.kind {
+        FormatKind::Char => {
+            return quote! {
+                result.write_u8(#value).unwrap();
+            };
+        }
         FormatKind::SignedByte => {
             return quote! {
                 result.write_i8(#value).unwrap();
@@ -252,6 +261,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
         .map(|s| match s.kind {
             FormatKind::PadByte => 0,
             FormatKind::Bytes => 1,
+            FormatKind::Char => s.count,
             _ => s.count,
         })
         .sum();

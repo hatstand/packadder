@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
+use syn::token::For;
 use syn::{Expr, LitStr, Token, parse_macro_input};
 
 use nom::{
@@ -51,12 +52,17 @@ enum FormatKind {
     UnsignedShort,    // H
     SignedInt,        // i
     UnsignedInt,      // I
+    SignedLong,       // l
+    UnsignedLong,     // L
     SignedLongLong,   // q
     UnsignedLongLong, // Q
+    SignedSize,       // n
+    UnsignedSize,     // N
     Float,            // f
     Double,           // d
     PadByte,          // x
     Bytes,            // s
+    Bool,             // ?
 }
 
 #[derive(Debug, Clone)]
@@ -88,12 +94,17 @@ fn parse_format_char(input: &str) -> IResult<&str, char> {
         char('H'),
         char('i'),
         char('I'),
+        char('l'),
+        char('L'),
         char('q'),
         char('Q'),
+        char('n'),
+        char('N'),
         char('f'),
         char('d'),
         char('x'),
         char('s'),
+        char('?'),
     ))(input)
 }
 
@@ -109,18 +120,28 @@ fn parse_format_spec(input: &str) -> IResult<&str, FormatSpec> {
         |(count_opt, format_char)| {
             let count = count_opt.unwrap_or(1);
             let kind = match format_char {
+                'x' => FormatKind::PadByte,
                 'c' => FormatKind::Char,
                 'b' => FormatKind::SignedByte,
                 'B' => FormatKind::UnsignedByte,
+                '?' => FormatKind::Bool,
                 'h' => FormatKind::SignedShort,
                 'H' => FormatKind::UnsignedShort,
                 'i' => FormatKind::SignedInt,
                 'I' => FormatKind::UnsignedInt,
+                'l' => FormatKind::SignedLong,
+                'L' => FormatKind::UnsignedLong,
                 'q' => FormatKind::SignedLongLong,
                 'Q' => FormatKind::UnsignedLongLong,
+                'n' => FormatKind::SignedSize,
+                'N' => FormatKind::UnsignedSize,
+                'e' => {
+                    panic!(
+                        "Format 'e' (half-precision float) is not supported in this implementation"
+                    )
+                }
                 'f' => FormatKind::Float,
                 'd' => FormatKind::Double,
-                'x' => FormatKind::PadByte,
                 's' => FormatKind::Bytes,
                 _ => unreachable!("Unknown format character: {}", format_char),
             };
@@ -154,13 +175,16 @@ fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
         FormatKind::UnsignedByte => quote! { u8 },
         FormatKind::SignedShort => quote! { i16 },
         FormatKind::UnsignedShort => quote! { u16 },
-        FormatKind::SignedInt => quote! { i32 },
-        FormatKind::UnsignedInt => quote! { u32 },
+        FormatKind::SignedInt | FormatKind::SignedLong => quote! { i32 },
+        FormatKind::UnsignedInt | FormatKind::UnsignedLong => quote! { u32 },
         FormatKind::SignedLongLong => quote! { i64 },
         FormatKind::UnsignedLongLong => quote! { u64 },
+        FormatKind::SignedSize => quote! { isize },
+        FormatKind::UnsignedSize => quote! { usize },
         FormatKind::Float => quote! { f32 },
         FormatKind::Double => quote! { f64 },
         FormatKind::Bytes => quote! { &[u8] },
+        FormatKind::Bool => quote! { bool },
         FormatKind::PadByte => {
             panic!("Cannot get Rust type for pad byte")
         }
@@ -205,14 +229,53 @@ fn generate_pack_code(
                 result.write_u8(#value).unwrap();
             };
         }
+        FormatKind::Bool => {
+            return quote! {
+                result.write_u8(if #value { 1 } else { 0 }).unwrap();
+            };
+        }
+        _ => {}
+    }
+
+    // ssize_t & size_t are always native-endian.
+    match spec.kind {
+        FormatKind::SignedSize => {
+            // Handle size_t and ssize_t based on target pointer width
+            #[cfg(target_pointer_width = "64")]
+            {
+                return quote! {
+                    result.write_i64::<byteorder::NativeEndian>(#value as i64).unwrap();
+                };
+            }
+            #[cfg(target_pointer_width = "32")]
+            {
+                return quote! {
+                    result.write_i32::<byteorder::NativeEndian>(#value as i32).unwrap();
+                };
+            }
+        }
+        FormatKind::UnsignedSize => {
+            #[cfg(target_pointer_width = "64")]
+            {
+                return quote! {
+                    result.write_u64::<byteorder::NativeEndian>(#value as u64).unwrap();
+                };
+            }
+            #[cfg(target_pointer_width = "32")]
+            {
+                return quote! {
+                    result.write_u32::<byteorder::NativeEndian>(#value as u32).unwrap();
+                };
+            }
+        }
         _ => {}
     }
 
     let write_method = match spec.kind {
         FormatKind::SignedShort => quote! { write_i16 },
         FormatKind::UnsignedShort => quote! { write_u16 },
-        FormatKind::SignedInt => quote! { write_i32 },
-        FormatKind::UnsignedInt => quote! { write_u32 },
+        FormatKind::SignedInt | FormatKind::SignedLong => quote! { write_i32 },
+        FormatKind::UnsignedInt | FormatKind::UnsignedLong => quote! { write_u32 },
         FormatKind::SignedLongLong => quote! { write_i64 },
         FormatKind::UnsignedLongLong => quote! { write_u64 },
         FormatKind::Float => quote! { write_f32 },

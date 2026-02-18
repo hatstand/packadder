@@ -266,6 +266,58 @@ mod tests {
         assert_eq!(bytes, b"Hello");
         Ok(())
     }
+
+    #[test]
+    fn test_pack_bool() -> Result<()> {
+        let bytes = pack!("??", true, false)?;
+        assert_eq!(bytes, vec![1, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_signed_long() -> Result<()> {
+        let bytes = pack!("<l", 42i32)?;
+        assert_eq!(bytes, vec![42, 0, 0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_unsigned_long() -> Result<()> {
+        let bytes = pack!("<L", 42u32)?;
+        assert_eq!(bytes, vec![42, 0, 0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_ssize_t() -> Result<()> {
+        let bytes = pack!("n", 42isize)?;
+        assert_eq!(bytes.len(), std::mem::size_of::<isize>());
+        assert_eq!(bytes[0], 42);
+        bytes[1..].iter().for_each(|&b| assert_eq!(b, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_size_t() -> Result<()> {
+        let bytes = pack!("N", 42usize)?;
+        assert_eq!(bytes.len(), std::mem::size_of::<usize>());
+        assert_eq!(bytes[0], 42);
+        bytes[1..].iter().for_each(|&b| assert_eq!(b, 0));
+        Ok(())
+    }
+
+    // Python's struct module ignores endianness for size_t and ssize_t.
+    // Probably not worth writing a test for an actual big endian machine but
+    // at least try not to fail.
+    #[cfg(target_endian = "little")]
+    #[test]
+    fn test_pack_size_t_big_endian_ignored() -> Result<()> {
+        let bytes = pack!(">N", 42usize)?;
+        assert_eq!(bytes.len(), std::mem::size_of::<usize>());
+        assert_eq!(bytes[0], 42);
+        bytes[1..].iter().for_each(|&b| assert_eq!(b, 0));
+        Ok(())
+    }
 }
 
 #[cfg(test)]

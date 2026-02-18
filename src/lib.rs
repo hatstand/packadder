@@ -122,6 +122,13 @@
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
+/// ```compile_fail
+/// use packadder::pack;
+/// // This fails at compile time: string spec too long.
+/// let bytes = pack!("257p", b"Hello, world!")?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+///
 /// Unsupported format codes:
 /// `e` (half-precision float)
 /// `F` (float complex)
@@ -338,6 +345,70 @@ mod tests {
         assert_eq!(bytes.len(), std::mem::size_of::<*const u8>());
         assert_eq!(bytes[0], 42);
         bytes[1..].iter().for_each(|&b| assert_eq!(b, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_zero_length_pascal_string() -> Result<()> {
+        let bytes = pack!("p", b"Hello")?;
+        assert_eq!(bytes, vec![0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_pascal_string() -> Result<()> {
+        let bytes = pack!("6p", b"Hello")?;
+        assert_eq!(bytes.len(), 6);
+        assert_eq!(bytes, vec![5, b'H', b'e', b'l', b'l', b'o']);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_short_pascal_string() -> Result<()> {
+        let bytes = pack!("6p", b"Hi")?;
+        assert_eq!(bytes.len(), 6);
+        assert_eq!(bytes, vec![5, b'H', b'i', 0, 0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_long_pascal_string() -> Result<()> {
+        let bytes = pack!("6p", b"Hello, world!")?;
+        assert_eq!(bytes.len(), 6);
+        assert_eq!(bytes, vec![5, b'H', b'e', b'l', b'l', b'o']);
+        Ok(())
+    }
+
+    // Strings longer than 255 are truncated.
+    #[test]
+    fn test_pack_very_long_pascal_string() -> Result<()> {
+        let long_str = b"I'm a lumberjack, and I'm okay.He's a lumberjack...
+I sleep all night. I work all day.
+
+He's a lumberjack, and he's okay.
+He sleeps all night and he works all day.
+
+I cut down trees. I eat my lunch.
+I go to the lavatory.
+On Wednesdays I go shoppin'
+And have buttered scones for tea.
+
+He cuts down trees. He eats his lunch.
+He goes to the lavatory.
+On Wednesdays he goes shopping
+And has buttered scones for tea.
+
+I'm (He's) a lumberjack, and I'm (he's) okay.
+I (He) sleep(s) all night and I (he) work(s) all day.
+
+I cut down trees. I skip and jump.
+I like to press wild flowers.
+I put on women's clothing
+And hang around in bars.";
+        let bytes = pack!("256p", long_str)?;
+        assert_eq!(bytes.len(), 256);
+        assert_eq!(bytes[0], 255);
+        assert_eq!(&bytes[1..], &long_str[..255]);
         Ok(())
     }
 }

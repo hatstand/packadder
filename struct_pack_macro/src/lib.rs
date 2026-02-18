@@ -90,32 +90,39 @@ fn parse_byte_order(input: &str) -> IResult<&str, ByteOrder> {
     .parse(input)
 }
 
+fn parse_format_kind<'a>(
+    code: char,
+    kind: FormatKind,
+) -> impl Parser<&'a str, Output = FormatKind, Error = nom::error::Error<&'a str>> {
+    map(char(code), move |_| kind)
+}
+
 /// Parse format character
-fn parse_format_char(input: &str) -> IResult<&str, char> {
+fn parse_format_char(input: &str) -> IResult<&str, FormatKind> {
     alt([
-        char('x'),
-        char('c'),
-        char('b'),
-        char('B'),
-        char('?'),
-        char('h'),
-        char('H'),
-        char('i'),
-        char('I'),
-        char('l'),
-        char('L'),
-        char('q'),
-        char('Q'),
-        char('n'),
-        char('N'),
-        char('f'),
-        char('d'),
-        char('e'),
-        char('F'),
-        char('D'),
-        char('s'),
-        char('p'),
-        char('P'),
+        parse_format_kind('x', FormatKind::PadByte),
+        parse_format_kind('c', FormatKind::Char),
+        parse_format_kind('b', FormatKind::SignedByte),
+        parse_format_kind('B', FormatKind::UnsignedByte),
+        parse_format_kind('?', FormatKind::Bool),
+        parse_format_kind('h', FormatKind::SignedShort),
+        parse_format_kind('H', FormatKind::UnsignedShort),
+        parse_format_kind('i', FormatKind::SignedInt),
+        parse_format_kind('I', FormatKind::UnsignedInt),
+        parse_format_kind('l', FormatKind::SignedLong),
+        parse_format_kind('L', FormatKind::UnsignedLong),
+        parse_format_kind('q', FormatKind::SignedLongLong),
+        parse_format_kind('Q', FormatKind::UnsignedLongLong),
+        parse_format_kind('n', FormatKind::SignedSize),
+        parse_format_kind('N', FormatKind::UnsignedSize),
+        parse_format_kind('e', FormatKind::Half),
+        parse_format_kind('f', FormatKind::Float),
+        parse_format_kind('d', FormatKind::Double),
+        parse_format_kind('F', FormatKind::FloatComplex),
+        parse_format_kind('D', FormatKind::DoubleComplex),
+        parse_format_kind('s', FormatKind::Bytes),
+        parse_format_kind('p', FormatKind::PascalString),
+        parse_format_kind('P', FormatKind::Pointer),
     ])
     .parse(input)
 }
@@ -129,34 +136,8 @@ fn parse_count(input: &str) -> IResult<&str, usize> {
 fn parse_format_spec(input: &str) -> IResult<&str, FormatSpec> {
     map(
         (opt(parse_count), parse_format_char),
-        |(count_opt, format_char)| {
+        |(count_opt, kind)| {
             let count = count_opt.unwrap_or(1);
-            let kind = match format_char {
-                'x' => FormatKind::PadByte,
-                'c' => FormatKind::Char,
-                'b' => FormatKind::SignedByte,
-                'B' => FormatKind::UnsignedByte,
-                '?' => FormatKind::Bool,
-                'h' => FormatKind::SignedShort,
-                'H' => FormatKind::UnsignedShort,
-                'i' => FormatKind::SignedInt,
-                'I' => FormatKind::UnsignedInt,
-                'l' => FormatKind::SignedLong,
-                'L' => FormatKind::UnsignedLong,
-                'q' => FormatKind::SignedLongLong,
-                'Q' => FormatKind::UnsignedLongLong,
-                'n' => FormatKind::SignedSize,
-                'N' => FormatKind::UnsignedSize,
-                'e' => FormatKind::Half,
-                'f' => FormatKind::Float,
-                'd' => FormatKind::Double,
-                'F' => FormatKind::FloatComplex,
-                'D' => FormatKind::DoubleComplex,
-                's' => FormatKind::Bytes,
-                'p' => FormatKind::PascalString,
-                'P' => FormatKind::Pointer,
-                _ => unreachable!("Unknown format character: {}", format_char),
-            };
             FormatSpec { kind, count }
         },
     )
@@ -200,7 +181,7 @@ fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
         FormatKind::Double => quote! { f64 },
         FormatKind::Bytes => quote! { &[u8] },
         FormatKind::Bool => quote! { bool },
-        FormatKind::PascalString => quote! { &str },
+        FormatKind::PascalString => quote! { &[u8]},
         FormatKind::Pointer => quote! { *const _ },
         _ => {
             abort_call_site!("Unsupported format kind for type mapping: {:?}", spec.kind)
@@ -214,19 +195,47 @@ fn generate_pack_code(
     value: &Expr,
 ) -> proc_macro2::TokenStream {
     // Handle bytes (string) format
-    if spec.kind == FormatKind::Bytes {
-        let count = spec.count;
-        return quote! {
-            {
-                let bytes: &[u8] = #value;
-                let len = bytes.len().min(#count);
-                result.extend_from_slice(&bytes[..len]);
-                // Pad with zeros if needed
-                for _ in len..#count {
-                    result.push(0);
+    match spec.kind {
+        FormatKind::Bytes => {
+            let count = spec.count;
+            return quote! {
+                {
+                    let bytes: &[u8] = #value;
+                    let len = bytes.len().min(#count);
+                    result.extend_from_slice(&bytes[..len]);
+                    // Pad with zeros if needed
+                    for _ in len..#count {
+                        result.push(0);
+                    }
                 }
+            };
+        }
+        FormatKind::PascalString => {
+            let count = spec.count;
+            if count > 256 {
+                abort_call_site!(
+                    "Pascal string count must be in range 0..=256, but got {}",
+                    count
+                );
             }
-        };
+            return quote! {
+                {
+                    // Pascal string:
+                    // Length-prefixed string where `#count` is the _total_ length including the prefix.
+                    let len_prefix = min(#count - 1, 255) as u8;
+                    let bytes: &[u8] = #value;
+
+                    let mut output_bytes = bytes[..min(bytes.len(), (len_prefix as usize))].to_vec();
+                    output_bytes.extend(vec![0; #count - 1 - output_bytes.len()]); // Pad with zeros if needed
+
+                    assert_eq!(output_bytes.len(), #count - 1);
+
+                    result.write_u8(len_prefix)?;
+                    result.extend(output_bytes);
+                }
+            };
+        }
+        _ => {}
     }
 
     // Single-byte types don't need endianness
@@ -357,6 +366,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
             FormatKind::PadByte => 0,
             FormatKind::Bytes => 1,
             FormatKind::Char => s.count,
+            FormatKind::PascalString => 1,
             _ => s.count,
         })
         .sum();
@@ -457,6 +467,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         {
             use byteorder::WriteBytesExt;
+            use std::cmp::min;
             #(#type_checks)*
             let mut result = Vec::new();
             #(#pack_operations)*

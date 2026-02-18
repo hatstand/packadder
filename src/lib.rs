@@ -502,6 +502,7 @@ mod python_compat_tests {
     }
 
     /// Macro to simplify compatibility tests
+    /// TODO: Make this work for byte strings too.
     macro_rules! test_compat {
         ($name:ident, $format: expr, $($val:expr),+) => {
             #[test]
@@ -601,23 +602,11 @@ mod python_compat_tests {
         -9223372036854775808i64
     );
 
-    #[test]
-    fn test_compat_edge_case_max_values() -> Result<()> {
-        // Multiple assertions in one test
-        let rust_result = pack!("B", 255u8)?;
-        let py_result = python_pack("B", vec![&255u8]);
-        assert_eq!(rust_result, py_result);
+    test_compat!(test_compat_byte_edge_case, "B", 255u8);
 
-        let rust_result = pack!(">H", 65535u16)?;
-        let py_result = python_pack(">H", vec![&65535u16]);
-        assert_eq!(rust_result, py_result);
+    test_compat!(test_compat_short_edge_case, ">H", 65535u16);
 
-        let rust_result = pack!(">I", 0xFFFFFFFFu32)?;
-        let py_result = python_pack(">I", vec![&0xFFFFFFFFu32]);
-        assert_eq!(rust_result, py_result);
-
-        Ok(())
-    }
+    test_compat!(test_compat_int_edge_case, ">I", 0xFFFFFFFFu32);
 
     #[test]
     fn test_compat_string_exact() -> Result<()> {

@@ -252,6 +252,20 @@ mod tests {
         assert_eq!(bytes, b"Hello");
         Ok(())
     }
+
+    #[test]
+    fn test_byte_string_too_short() -> Result<()> {
+        let bytes = pack!("5s", b"Hi")?;
+        assert_eq!(bytes, vec![b'H', b'i', 0, 0, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_byte_string_too_long() -> Result<()> {
+        let bytes = pack!("5s", b"Hello, world!")?;
+        assert_eq!(bytes, b"Hello");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

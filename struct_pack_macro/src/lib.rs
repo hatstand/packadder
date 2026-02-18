@@ -142,7 +142,7 @@ fn format_char_to_rust_type(ch: char) -> proc_macro2::TokenStream {
     }
 }
 
-fn generate_pack_code(byte_order: ByteOrder, ch: char, value: &Expr) -> proc_macro2::TokenStream {
+fn generate_pack_code(byte_order: ByteOrder, _ch: char, value: &Expr) -> proc_macro2::TokenStream {
     match byte_order {
         ByteOrder::Big | ByteOrder::Network => {
             quote! { result.extend((#value).to_be_bytes()); }

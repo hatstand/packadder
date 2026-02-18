@@ -83,7 +83,6 @@ name = "packadder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "nom",
  "pyo3",
  "struct_pack_macro",
 ]

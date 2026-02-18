@@ -503,24 +503,11 @@ mod python_compat_tests {
 
     /// Macro to simplify compatibility tests
     macro_rules! test_compat {
-        ($name:ident, $format:expr, $py_values:expr) => {
-            #[test]
-            fn $name() -> Result<()> {
-                let rust_result = pack!($format)?;
-                let py_result = python_pack($format, $py_values);
-                assert_eq!(
-                    rust_result, py_result,
-                    "Mismatch for format '{}': Rust={:?}, Python={:?}",
-                    $format, rust_result, py_result
-                );
-                Ok(())
-            }
-        };
-        ($name:ident, $format:expr, $py_values:expr, $($val:expr),+) => {
+        ($name:ident, $format: expr, $($val:expr),+) => {
             #[test]
             fn $name() -> Result<()> {
                 let rust_result = pack!($format, $($val),+)?;
-                let py_result = python_pack($format, $py_values);
+                let py_result = python_pack($format, vec![$(&$val),+]);
                 assert_eq!(
                     rust_result, py_result,
                     "Mismatch for format '{}': Rust={:?}, Python={:?}",
@@ -528,150 +515,63 @@ mod python_compat_tests {
                 );
                 Ok(())
             }
-        };
+        }
     }
 
     // Basic type tests
-    test_compat!(
-        test_compat_unsigned_int_little_endian,
-        "<I",
-        vec![&0x12345678u32],
-        0x12345678u32
-    );
+    test_compat!(test_compat_unsigned_int_little_endian, "<I", 0x12345678u32);
 
-    test_compat!(
-        test_compat_unsigned_int_big_endian,
-        ">I",
-        vec![&0x12345678u32],
-        0x12345678u32
-    );
+    test_compat!(test_compat_unsigned_int_big_endian, ">I", 0x12345678u32);
 
-    test_compat!(test_compat_signed_byte, "b", vec![&-42i8], -42i8);
+    test_compat!(test_compat_signed_byte, "b", -42i8);
 
-    test_compat!(test_compat_unsigned_byte, "B", vec![&255u8], 255u8);
+    test_compat!(test_compat_unsigned_byte, "B", 255u8);
 
-    test_compat!(
-        test_compat_signed_short_little_endian,
-        "<h",
-        vec![&-1000i16],
-        -1000i16
-    );
+    test_compat!(test_compat_signed_short_little_endian, "<h", -1000i16);
 
-    test_compat!(
-        test_compat_unsigned_short_big_endian,
-        ">H",
-        vec![&0x1234u16],
-        0x1234u16
-    );
+    test_compat!(test_compat_unsigned_short_big_endian, ">H", 0x1234u16);
 
-    test_compat!(
-        test_compat_signed_int_little_endian,
-        "<i",
-        vec![&-100000i32],
-        -100000i32
-    );
+    test_compat!(test_compat_signed_int_little_endian, "<i", -100000i32);
 
-    test_compat!(
-        test_compat_unsigned_int_network_order,
-        "!I",
-        vec![&0xDEADBEEFu32],
-        0xDEADBEEFu32
-    );
+    test_compat!(test_compat_unsigned_int_network_order, "!I", 0xDEADBEEFu32);
 
     test_compat!(
         test_compat_signed_long_long_little_endian,
         "<q",
-        vec![&-9223372036854775807i64],
         -9223372036854775807i64
     );
 
     test_compat!(
         test_compat_unsigned_long_long_big_endian,
         ">Q",
-        vec![&0x123456789ABCDEFu64],
         0x123456789ABCDEFu64
     );
 
-    test_compat!(
-        test_compat_float_little_endian,
-        "<f",
-        vec![&3.14159f32],
-        3.14159f32
-    );
+    test_compat!(test_compat_float_little_endian, "<f", 3.14159f32);
 
-    test_compat!(
-        test_compat_double_big_endian,
-        ">d",
-        vec![&2.718281828459045f64],
-        2.718281828459045f64
-    );
+    test_compat!(test_compat_double_big_endian, ">d", 2.718281828459045f64);
 
     test_compat!(
         test_compat_multiple_values_mixed,
         ">BHI",
-        vec![&0x42u8, &0x1234u16, &0x56789ABCu32],
         0x42u8,
         0x1234u16,
         0x56789ABCu32
     );
 
-    test_compat!(
-        test_compat_three_unsigned_shorts,
-        "<HHH",
-        vec![&1u16, &2u16, &3u16],
-        1u16,
-        2u16,
-        3u16
-    );
+    test_compat!(test_compat_three_unsigned_shorts, "<HHH", 1u16, 2u16, 3u16);
 
-    test_compat!(
-        test_compat_signed_values,
-        ">bhi",
-        vec![&-1i8, &-256i16, &1000i32],
-        -1i8,
-        -256i16,
-        1000i32
-    );
+    test_compat!(test_compat_signed_values, ">bhi", -1i8, -256i16, 1000i32);
 
-    test_compat!(
-        test_compat_five_values,
-        ">BHBIB",
-        vec![&1u8, &2u16, &3u8, &4u32, &5u8],
-        1u8,
-        2u16,
-        3u8,
-        4u32,
-        5u8
-    );
+    test_compat!(test_compat_five_values, ">BHBIB", 1u8, 2u16, 3u8, 4u32, 5u8);
 
-    test_compat!(
-        test_compat_repeat_count,
-        "3B",
-        vec![&0x10u8, &0x20u8, &0x30u8],
-        0x10u8,
-        0x20u8,
-        0x30u8
-    );
+    test_compat!(test_compat_repeat_count, "3B", 0x10u8, 0x20u8, 0x30u8);
 
-    test_compat!(
-        test_compat_native_byte_order,
-        "=I",
-        vec![&0x12345678u32],
-        0x12345678u32
-    );
+    test_compat!(test_compat_native_byte_order, "=I", 0x12345678u32);
 
     test_compat!(
         test_compat_complex_format,
         "<BhHiIqQ",
-        vec![
-            &0x12u8,
-            &-1000i16,
-            &5000u16,
-            &-100000i32,
-            &0xDEADBEEFu32,
-            &-9223372036854775807i64,
-            &0x123456789ABCDEFu64,
-        ],
         0x12u8,
         -1000i16,
         5000u16,
@@ -684,31 +584,17 @@ mod python_compat_tests {
     test_compat!(
         test_compat_floats_and_ints,
         "<fbdI",
-        vec![&3.14f32, &-42i8, &2.718f64, &0x12345678u32],
         3.14f32,
         -42i8,
         2.718f64,
         0x12345678u32
     );
 
-    test_compat!(
-        test_compat_edge_case_zero,
-        ">IHB",
-        vec![&0u32, &0u16, &0u8],
-        0u32,
-        0u16,
-        0u8
-    );
+    test_compat!(test_compat_edge_case_zero, ">IHB", 0u32, 0u16, 0u8);
 
     test_compat!(
         test_compat_negative_numbers,
         "<bhiq",
-        vec![
-            &-128i8,
-            &-32768i16,
-            &-2147483648i32,
-            &-9223372036854775808i64
-        ],
         -128i8,
         -32768i16,
         -2147483648i32,
@@ -795,6 +681,30 @@ mod python_compat_tests {
         assert_eq!(
             rust_result, py_result,
             "Mismatch for format '>H5sB': Rust={:?}, Python={:?}",
+            rust_result, py_result
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_compat_string_alignment() -> Result<()> {
+        let rust_result = pack!("chic", b'A', 42, 43, b'B')?;
+        let py_result = Python::with_gil(|py| {
+            let py_bytes_a = PyBytes::new_bound(py, b"A");
+            let py_bytes_b = PyBytes::new_bound(py, b"B");
+            python_pack_with_bytes(
+                "chic",
+                vec![
+                    py_bytes_a.into_py(py),
+                    42i32.into_py(py),
+                    43i32.into_py(py),
+                    py_bytes_b.into_py(py),
+                ],
+            )
+        });
+        assert_eq!(
+            rust_result, py_result,
+            "Mismatch for format 'chic': Rust={:?}, Python={:?}",
             rust_result, py_result
         );
         Ok(())

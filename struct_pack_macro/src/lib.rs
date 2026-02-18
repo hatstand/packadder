@@ -1,3 +1,4 @@
+use nom::Parser;
 use proc_macro::TokenStream;
 use proc_macro_error::{abort_call_site, proc_macro_error};
 use quote::quote;
@@ -45,9 +46,11 @@ enum ByteOrder {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FormatKind {
+    PadByte,          // x
     Char,             // c
     SignedByte,       // b
     UnsignedByte,     // B
+    Bool,             // ?
     SignedShort,      // h
     UnsignedShort,    // H
     SignedInt,        // i
@@ -61,11 +64,11 @@ enum FormatKind {
     Half,             // e
     Float,            // f
     Double,           // d
-    PadByte,          // x
-    Bytes,            // s
-    Bool,             // ?
     FloatComplex,     // F
     DoubleComplex,    // D
+    Bytes,            // s
+    PascalString,     // p
+    Pointer,          // P
 }
 
 #[derive(Debug, Clone)]
@@ -84,12 +87,13 @@ fn parse_byte_order(input: &str) -> IResult<&str, ByteOrder> {
         map(char('!'), |_| ByteOrder::Network),
         map(char('='), |_| ByteOrder::Native),
         map(char('@'), |_| ByteOrder::Native),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 /// Parse format character
 fn parse_format_char(input: &str) -> IResult<&str, char> {
-    alt((
+    alt([
         char('x'),
         char('c'),
         char('b'),
@@ -111,12 +115,15 @@ fn parse_format_char(input: &str) -> IResult<&str, char> {
         char('F'),
         char('D'),
         char('s'),
-    ))(input)
+        char('p'),
+        char('P'),
+    ])
+    .parse(input)
 }
 
 /// Parse optional repeat count
 fn parse_count(input: &str) -> IResult<&str, usize> {
-    map_res(digit1, |s: &str| s.parse::<usize>())(input)
+    map_res(digit1, |s: &str| s.parse::<usize>()).parse(input)
 }
 
 /// Parse a single format specification
@@ -147,22 +154,27 @@ fn parse_format_spec(input: &str) -> IResult<&str, FormatSpec> {
                 'F' => FormatKind::FloatComplex,
                 'D' => FormatKind::DoubleComplex,
                 's' => FormatKind::Bytes,
+                'p' => FormatKind::PascalString,
+                'P' => FormatKind::Pointer,
                 _ => unreachable!("Unknown format character: {}", format_char),
             };
             FormatSpec { kind, count }
         },
-    )(input)
+    )
+    .parse(input)
 }
 
 fn parse_format_string(fmt: &str) -> Result<(ByteOrder, Vec<FormatSpec>), String> {
     // Parse optional byte order
-    let (rest, byte_order_opt) =
-        opt(parse_byte_order)(fmt).map_err(|e| format!("Failed to parse byte order: {}", e))?;
+    let (rest, byte_order_opt) = opt(parse_byte_order)
+        .parse(fmt)
+        .map_err(|e| format!("Failed to parse byte order: {}", e))?;
 
     let byte_order = byte_order_opt.unwrap_or(ByteOrder::Native);
 
     // Parse format specs
-    let (rest, specs) = many0(parse_format_spec)(rest)
+    let (rest, specs) = many0(parse_format_spec)
+        .parse(rest)
         .map_err(|e| format!("Failed to parse format specs: {}", e))?;
 
     if !rest.is_empty() {

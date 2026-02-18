@@ -1,4 +1,4 @@
-//! Rust port of Python's `struct.pack()` functionality
+//! Rust port of Python's [`struct.pack()`](https://docs.python.org/3/library/struct.html) functionality
 //!
 //! This module provides a way to pack values into bytes according to a format string,
 //! similar to Python's struct module. The format string is parsed using nom and values
@@ -12,25 +12,30 @@
 //!   - `>` - big-endian
 //!   - `!` - network (big-endian)
 //!   - `=` - native byte order
-//!   - `@` - native byte order with native alignment (default)
+//!   - `@` - native byte order (with native alignment). Also the default.
 //! - Format characters (optionally preceded by a repeat count):
+//!   - `x` - pad byte
+//!   - `c` - char (u8)
 //!   - `b` - signed byte (i8)
 //!   - `B` - unsigned byte (u8)
+//!   - `?` - bool (u8, 1 for true, 0 for false)
 //!   - `h` - signed short (i16)
 //!   - `H` - unsigned short (u16)
 //!   - `i` - signed int (i32)
 //!   - `I` - unsigned int (u32)
+//!   - `l` - signed long (i32)
+//!   - `L` - unsigned long (u32)
 //!   - `q` - signed long long (i64)
 //!   - `Q` - unsigned long long (u64)
 //!   - `f` - float (f32)
 //!   - `d` - double (f64)
 //!   - `s` - bytes (requires count)
-//!   - `x` - pad byte
+//!   - `p` - pascal string (requires count)
+//!   - `P` - pointer (const *)
 //!
 //! # Examples
 //!
 //! ```
-//!
 //! // Type-safe packing.
 //! use packadder::pack;
 //! let bytes = pack!(">HHI", 1u16, 2u16, 0x12345678u32)?;
@@ -48,9 +53,12 @@
 //! cargo test python_compat
 //! ```
 //!
-//! Note: These tests require Python to be installed with pyo3 support.
+//! Note: These tests require Python to be installed.
 
 /// Variadic pack! macro with compile-time type checking
+///
+/// The first argument is a format string that specifies how to pack the subsequent values into bytes.
+/// The following arguments are the values to be packed, which must match the types specified by the format string.
 ///
 /// This macro parses the format string at compile time and generates code that enforces
 /// the exact types required by each format character.
@@ -162,6 +170,31 @@ mod tests {
         let c: u32 = 0x12345678;
         let bytes = pack!(">HHI", a, b, c)?;
         assert_eq!(bytes, vec![0, 1, 0, 2, 0x12, 0x34, 0x56, 0x78]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pack_alignment() -> Result<()> {
+        let bytes = pack!("hI", 42, 44)?;
+        assert_eq!(bytes, vec![0x2a, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_mixed_alignment() -> Result<()> {
+        // This should be laid out as:
+        // char (1 byte) + 1 byte padding + 2 bytes for short + 4 bytes for int + 1 byte
+        // A C struct would add 3 more bytes of padding at the end, but Python does not
+        // implement that.
+        let bytes = pack!("chic", b'A', 42, 43, b'B')?;
+        assert_eq!(bytes, vec![b'A', 0, 42, 0, 43, 0, 0, 0, b'B']);
+        Ok(())
+    }
+
+    #[test]
+    fn test_python_alignment_example() -> Result<()> {
+        let bytes = pack!("@llh0l", 1, 2, 3)?;
+        assert_eq!(bytes, vec![1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0]);
         Ok(())
     }
 

@@ -40,7 +40,8 @@ enum ByteOrder {
     Little,
     Big,
     Network,
-    Native,
+    NativeUnaligned, // = format
+    NativeAligned,   // @ format (default) - uses C struct alignment
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,8 +85,8 @@ fn parse_byte_order(input: &str) -> IResult<&str, ByteOrder> {
         map(char('<'), |_| ByteOrder::Little),
         map(char('>'), |_| ByteOrder::Big),
         map(char('!'), |_| ByteOrder::Network),
-        map(char('='), |_| ByteOrder::Native),
-        map(char('@'), |_| ByteOrder::Native),
+        map(char('='), |_| ByteOrder::NativeUnaligned),
+        map(char('@'), |_| ByteOrder::NativeAligned),
     ))
     .parse(input)
 }
@@ -150,7 +151,7 @@ fn parse_format_string(fmt: &str) -> Result<(ByteOrder, Vec<FormatSpec>), String
         .parse(fmt)
         .map_err(|e| format!("Failed to parse byte order: {}", e))?;
 
-    let byte_order = byte_order_opt.unwrap_or(ByteOrder::Native);
+    let byte_order = byte_order_opt.unwrap_or(ByteOrder::NativeAligned);
 
     // Parse format specs
     let (rest, specs) = many0(parse_format_spec)
@@ -162,6 +163,64 @@ fn parse_format_string(fmt: &str) -> Result<(ByteOrder, Vec<FormatSpec>), String
     }
 
     Ok((byte_order, specs))
+}
+
+/// Get the size in bytes of a format type
+fn get_type_size(kind: FormatKind) -> usize {
+    match kind {
+        FormatKind::PadByte => 1,
+        FormatKind::Char => 1,
+        FormatKind::SignedByte => 1,
+        FormatKind::UnsignedByte => 1,
+        FormatKind::Bool => 1,
+        FormatKind::SignedShort => 2,
+        FormatKind::UnsignedShort => 2,
+        FormatKind::SignedInt => 4,
+        FormatKind::UnsignedInt => 4,
+        FormatKind::SignedLong => 4,
+        FormatKind::UnsignedLong => 4,
+        FormatKind::SignedLongLong => 8,
+        FormatKind::UnsignedLongLong => 8,
+        FormatKind::Float => 4,
+        FormatKind::Double => 8,
+        FormatKind::SignedSize | FormatKind::UnsignedSize | FormatKind::Pointer => {
+            std::mem::size_of::<usize>()
+        }
+        FormatKind::Bytes => 1,        // per byte
+        FormatKind::PascalString => 1, // per byte
+        FormatKind::Half => 2,
+        FormatKind::FloatComplex => 8,
+        FormatKind::DoubleComplex => 16,
+    }
+}
+
+/// Get the alignment requirement for a format type (for C struct alignment)
+fn get_type_alignment(kind: FormatKind) -> usize {
+    match kind {
+        FormatKind::PadByte => 1,
+        FormatKind::Char => 1,
+        FormatKind::SignedByte => 1,
+        FormatKind::UnsignedByte => 1,
+        FormatKind::Bool => 1,
+        FormatKind::SignedShort => 2,
+        FormatKind::UnsignedShort => 2,
+        FormatKind::SignedInt => 4,
+        FormatKind::UnsignedInt => 4,
+        FormatKind::SignedLong => 4,
+        FormatKind::UnsignedLong => 4,
+        FormatKind::SignedLongLong => 8,
+        FormatKind::UnsignedLongLong => 8,
+        FormatKind::Float => 4,
+        FormatKind::Double => 8,
+        FormatKind::SignedSize | FormatKind::UnsignedSize | FormatKind::Pointer => {
+            std::mem::size_of::<usize>()
+        }
+        FormatKind::Bytes => 1,
+        FormatKind::PascalString => 1,
+        FormatKind::Half => 2,
+        FormatKind::FloatComplex => 4,  // Align to float
+        FormatKind::DoubleComplex => 8, // Align to double
+    }
 }
 
 fn format_spec_to_rust_type(spec: &FormatSpec) -> proc_macro2::TokenStream {
@@ -336,7 +395,7 @@ fn generate_pack_code(
                 result.#write_method::<byteorder::LittleEndian>(#value).unwrap();
             }
         }
-        ByteOrder::Native => {
+        ByteOrder::NativeUnaligned | ByteOrder::NativeAligned => {
             quote! {
                 result.#write_method::<byteorder::NativeEndian>(#value).unwrap();
             }
@@ -388,9 +447,7 @@ pub fn pack(input: TokenStream) -> TokenStream {
 
         return TokenStream::from(quote! {
             {
-                let mut result = Vec::new();
-                #(#pack_operations)*
-                Ok::<Vec<u8>, anyhow::Error>(result)
+                Ok::<Vec<u8>, anyhow::Error>(Vec::new())
             }
         });
     }
@@ -412,7 +469,32 @@ pub fn pack(input: TokenStream) -> TokenStream {
     let mut pack_operations = Vec::new();
     let mut value_idx = 0;
 
+    // Track current offset for alignment calculations (only used with NativeAligned)
+    let needs_alignment = byte_order == ByteOrder::NativeAligned;
+
+    if needs_alignment {
+        // Add offset tracking at runtime
+        pack_operations.push(quote! {
+            let mut __offset: usize = 0;
+        });
+    }
+
     for spec in &specs {
+        // Insert alignment padding if needed (for @ format)
+        if needs_alignment && spec.kind != FormatKind::PadByte {
+            let alignment = get_type_alignment(spec.kind);
+            pack_operations.push(quote! {
+                // Align to the type's alignment requirement
+                let desired_alignment = #alignment;
+                let current_alignment = __offset % desired_alignment;
+                let padding = if current_alignment == 0 { 0 } else { desired_alignment - current_alignment };
+                for _ in 0..padding {
+                    result.push(0);
+                }
+                __offset = __offset.wrapping_add(padding);
+            });
+        }
+
         if spec.kind == FormatKind::PadByte {
             // Pad bytes - no value needed, just add zeros
             let count = spec.count;
@@ -421,7 +503,12 @@ pub fn pack(input: TokenStream) -> TokenStream {
                     result.push(0);
                 }
             });
-        } else if spec.kind == FormatKind::Bytes {
+            if needs_alignment {
+                pack_operations.push(quote! {
+                    __offset = __offset.wrapping_add(#count);
+                });
+            }
+        } else if spec.kind == FormatKind::Bytes || spec.kind == FormatKind::PascalString {
             // Bytes format - consumes 1 value regardless of count
             if value_idx >= values.len() {
                 break;
@@ -438,6 +525,14 @@ pub fn pack(input: TokenStream) -> TokenStream {
             // Generate packing code
             let pack_code = generate_pack_code(byte_order, spec, value);
             pack_operations.push(pack_code);
+
+            // Track offset for alignment
+            if needs_alignment {
+                let size = spec.count; // For Bytes/PascalString, count is the total size
+                pack_operations.push(quote! {
+                    __offset = __offset.wrapping_add(#size);
+                });
+            }
 
             value_idx += 1;
         } else {
@@ -458,6 +553,14 @@ pub fn pack(input: TokenStream) -> TokenStream {
                 // Generate packing code
                 let pack_code = generate_pack_code(byte_order, spec, value);
                 pack_operations.push(pack_code);
+
+                // Track offset for alignment
+                if needs_alignment {
+                    let size = get_type_size(spec.kind);
+                    pack_operations.push(quote! {
+                        __offset = __offset.wrapping_add(#size);
+                    });
+                }
 
                 value_idx += 1;
             }

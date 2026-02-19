@@ -9,4 +9,4 @@ byteorder = "1.5"
 
 [dev-dependencies]
 anyhow = "1.0.101"
-pyo3 = { version = "0.22", features = ["auto-initialize"] }
+pyo3 = { version = "0.24", features = ["auto-initialize"] }

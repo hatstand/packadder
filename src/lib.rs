@@ -458,46 +458,42 @@ mod python_compat_tests {
 
     use super::*;
     use anyhow::Result;
-    use pyo3::prelude::*;
-    use pyo3::types::PyBytes;
+    use pyo3::types::{PyBytes, PyTuple};
+    use pyo3::{IntoPyObjectExt, prelude::*};
 
     /// Helper function to call Python's struct.pack
-    fn python_pack(format: &str, values: Vec<&dyn ToPyObject>) -> Vec<u8> {
+    fn python_pack(format: &str, values: Vec<PyObject>) -> Result<Vec<u8>> {
         Python::with_gil(|py| {
-            let struct_module = py.import_bound("struct").unwrap();
-            let pack_fn = struct_module.getattr("pack").unwrap();
+            let struct_module = py.import("struct")?;
+            let pack_fn = struct_module.getattr("pack")?;
 
             // Build args tuple: (format, *values)
-            let mut args = vec![format.to_object(py)];
-            for value in values {
-                args.push(value.to_object(py));
-            }
-
-            let result = pack_fn
-                .call1(pyo3::types::PyTuple::new_bound(py, args))
-                .unwrap();
-            let bytes: &Bound<'_, PyBytes> = result.downcast().unwrap();
-            bytes.as_bytes().to_vec()
-        })
-    }
-
-    /// Helper function to call Python's struct.pack with byte strings
-    fn python_pack_with_bytes(format: &str, values: Vec<pyo3::Py<pyo3::PyAny>>) -> Vec<u8> {
-        Python::with_gil(|py| {
-            let struct_module = py.import_bound("struct").unwrap();
-            let pack_fn = struct_module.getattr("pack").unwrap();
-
-            // Build args tuple: (format, *values)
-            let mut args = vec![format.to_object(py)];
+            let mut args = vec![format.into_py_any(py)?];
             for value in values {
                 args.push(value);
             }
 
-            let result = pack_fn
-                .call1(pyo3::types::PyTuple::new_bound(py, args))
-                .unwrap();
+            let result = pack_fn.call1(PyTuple::new(py, args)?)?;
             let bytes: &Bound<'_, PyBytes> = result.downcast().unwrap();
-            bytes.as_bytes().to_vec()
+            Ok(bytes.as_bytes().to_vec())
+        })
+    }
+
+    /// Helper function to call Python's struct.pack with byte strings
+    fn python_pack_with_bytes(format: &str, values: Vec<pyo3::Py<pyo3::PyAny>>) -> Result<Vec<u8>> {
+        Python::with_gil(|py| {
+            let struct_module = py.import("struct")?;
+            let pack_fn = struct_module.getattr("pack")?;
+
+            // Build args tuple: (format, *values)
+            let mut args = vec![format.into_py_any(py)?];
+            for value in values {
+                args.push(value);
+            }
+
+            let result = pack_fn.call1(pyo3::types::PyTuple::new(py, args)?)?;
+            let bytes: &Bound<'_, PyBytes> = result.downcast().unwrap();
+            Ok(bytes.as_bytes().to_vec())
         })
     }
 
@@ -508,13 +504,15 @@ mod python_compat_tests {
             #[test]
             fn $name() -> Result<()> {
                 let rust_result = pack!($format, $($val),+)?;
-                let py_result = python_pack($format, vec![$(&$val),+]);
-                assert_eq!(
-                    rust_result, py_result,
-                    "Mismatch for format '{}': Rust={:?}, Python={:?}",
-                    $format, rust_result, py_result
-                );
-                Ok(())
+                Python::with_gil(|py| -> Result<()> {
+                    let py_result = python_pack($format, vec![$($val.into_py_any(py)?),+])?;
+                    assert_eq!(
+                        rust_result, py_result,
+                        "Mismatch for format '{}': Rust={:?}, Python={:?}",
+                        $format, rust_result, py_result
+                    );
+                    Ok(())
+                })
             }
         }
     }
@@ -612,9 +610,9 @@ mod python_compat_tests {
     fn test_compat_string_exact() -> Result<()> {
         let rust_result = pack!("5s", b"hello")?;
         let py_result = Python::with_gil(|py| {
-            let py_bytes = PyBytes::new_bound(py, b"hello");
-            python_pack_with_bytes("5s", vec![py_bytes.into_py(py)])
-        });
+            let py_bytes = PyBytes::new(py, b"hello");
+            python_pack_with_bytes("5s", vec![py_bytes.into_py_any(py)?])
+        })?;
         assert_eq!(
             rust_result, py_result,
             "Mismatch for format '5s': Rust={:?}, Python={:?}",
@@ -627,9 +625,9 @@ mod python_compat_tests {
     fn test_compat_string_short() -> Result<()> {
         let rust_result = pack!("5s", b"hi")?;
         let py_result = Python::with_gil(|py| {
-            let py_bytes = PyBytes::new_bound(py, b"hi");
-            python_pack_with_bytes("5s", vec![py_bytes.into_py(py)])
-        });
+            let py_bytes = PyBytes::new(py, b"hi");
+            python_pack_with_bytes("5s", vec![py_bytes.into_py_any(py)?])
+        })?;
         assert_eq!(
             rust_result, py_result,
             "Mismatch for format '5s': Rust={:?}, Python={:?}",
@@ -642,9 +640,9 @@ mod python_compat_tests {
     fn test_compat_string_long() -> Result<()> {
         let rust_result = pack!("5s", b"hello world")?;
         let py_result = Python::with_gil(|py| {
-            let py_bytes = PyBytes::new_bound(py, b"hello world");
-            python_pack_with_bytes("5s", vec![py_bytes.into_py(py)])
-        });
+            let py_bytes = PyBytes::new(py, b"hello world");
+            python_pack_with_bytes("5s", vec![py_bytes.into_py_any(py)?])
+        })?;
         assert_eq!(
             rust_result, py_result,
             "Mismatch for format '5s': Rust={:?}, Python={:?}",
@@ -657,16 +655,16 @@ mod python_compat_tests {
     fn test_compat_string_with_types() -> Result<()> {
         let rust_result = pack!(">H5sB", 0x1234u16, b"test", 0x42u8)?;
         let py_result = Python::with_gil(|py| {
-            let py_bytes = PyBytes::new_bound(py, b"test");
+            let py_bytes = PyBytes::new(py, b"test");
             python_pack_with_bytes(
                 ">H5sB",
                 vec![
-                    0x1234u16.into_py(py),
-                    py_bytes.into_py(py),
-                    0x42u8.into_py(py),
+                    0x1234u16.into_py_any(py)?,
+                    py_bytes.into_py_any(py)?,
+                    0x42u8.into_py_any(py)?,
                 ],
             )
-        });
+        })?;
         assert_eq!(
             rust_result, py_result,
             "Mismatch for format '>H5sB': Rust={:?}, Python={:?}",
@@ -679,18 +677,18 @@ mod python_compat_tests {
     fn test_compat_string_alignment() -> Result<()> {
         let rust_result = pack!("chic", b'A', 42, 43, b'B')?;
         let py_result = Python::with_gil(|py| {
-            let py_bytes_a = PyBytes::new_bound(py, b"A");
-            let py_bytes_b = PyBytes::new_bound(py, b"B");
+            let py_bytes_a = PyBytes::new(py, b"A");
+            let py_bytes_b = PyBytes::new(py, b"B");
             python_pack_with_bytes(
                 "chic",
                 vec![
-                    py_bytes_a.into_py(py),
-                    42i32.into_py(py),
-                    43i32.into_py(py),
-                    py_bytes_b.into_py(py),
+                    py_bytes_a.into_py_any(py)?,
+                    42i32.into_py_any(py)?,
+                    43i32.into_py_any(py)?,
+                    py_bytes_b.into_py_any(py)?,
                 ],
             )
-        });
+        })?;
         assert_eq!(
             rust_result, py_result,
             "Mismatch for format 'chic': Rust={:?}, Python={:?}",
